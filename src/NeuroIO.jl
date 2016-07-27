@@ -1,5 +1,7 @@
 module NeuroIO
-
-# package code goes here
+include("Struct.jl")
+include("NCS.jl")
+include("PLX.jl")
+include("NEV.jl")
 
 end # module
