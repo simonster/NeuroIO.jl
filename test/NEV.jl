@@ -30,7 +30,7 @@ if !isfile(joinpath(testdir, "nev.mat"))
     """
 end
 
-nev = NeuroIO.NEV.readnev(open("NSS Data/SampleNSSData.nev"))
+nev = readnev(open("NSS Data/SampleNSSData.nev"))
 nev_mat = matread("NSS Data/nev.mat")["NEV"]
 @test nev.header.bytes_in_headers == nev_mat["MetaTags"]["HeaderOffset"]
 @test nev.header.bytes_in_data_packets == nev_mat["MetaTags"]["PacketBytes"]
@@ -51,7 +51,6 @@ for i = 1:length(info["ElectrodeID"])
     @test ch.high_threshold == info["HighThreshold"][i]
     @test ch.low_threshold == info["LowThreshold"][i]
     @test ch.number_of_sorted_units == info["Units"][i]
-    @test ch.bytes_per_waveform == info["WaveformBytes"][i]
     @test ch.label == rstrip(string(info["ElectrodeLabel"][i]...), '\0')
     @test ch.high_pass.cutoff == info["HighFreqCorner"][i]
     @test ch.high_pass.order == info["HighFreqOrder"][i]
@@ -61,12 +60,12 @@ for i = 1:length(info["ElectrodeID"])
     @test ch.low_pass.filter_type == info["LowFilterType"][i]
 
     spike_index = find(spikes["Electrode"] .== id)
-    @test ch.times == spikes["TimeStamp"][spike_index]/nev.header.time_resolution_of_time_stamps
+    @test NeuroIO.times(ch) == spikes["TimeStamp"][spike_index]/nev.header.time_resolution_of_time_stamps
     @test ch.unit_numbers == spikes["Unit"][spike_index]
-    @test ch.waveforms == spikes["Waveform"][:, spike_index]
+    @test NeuroIO.data(ch) == spikes["Waveform"][:, spike_index]
 end
 
-ns5 = NeuroIO.NEV.readnsx(open("NSS Data/SampleNSSData.ns5"))
+ns5 = readnsx(open("NSS Data/SampleNSSData.ns5"))
 ns5_mat = matread("NSS Data/ns5.mat")["NS5"]
 @test ns5.header.label == rstrip(string(ns5_mat["MetaTags"]["SamplingLabel"]...), '\0')
 @test ns5.header.period == 30000/ns5_mat["MetaTags"]["SamplingFreq"]
@@ -91,5 +90,5 @@ for i = 1:length(info["ElectrodeID"])
     @test ch.low_pass.order == info["LowFreqOrder"][i]
     @test ch.low_pass.filter_type == info["LowFilterType"][i]
 
-    @test ch.samples == vec(ns5_mat["Data"][i, :])
+    @test NeuroIO.data(ch) == vec(ns5_mat["Data"][i, :])
 end

@@ -1,4 +1,4 @@
-using PLX, MAT, BinDeps, Base.Test
+using NeuroIO, MAT, BinDeps, Base.Test
 
 # Unfortunately, these test files come from the SDK provided by Plexon Inc. and 
 # are assumed not to be redistributable 
@@ -6,7 +6,7 @@ testdir = joinpath(dirname(@__FILE__), "Matlab Offline Files SDK", "mexPlex", "t
 if !isdir(testdir)
     parentdir = dirname(@__FILE__)
     bundlezip = joinpath(parentdir, "Plexon Offline SDKs.zip")
-    run(download_cmd("http://www.plexon.com/sites/default/files/downloads/OmniPlex%20and%20MAP%20Offline%20SDK%20Bundle.zip",
+    run(download_cmd("http://www.plexon.com/sites/default/files/downloads/OmniPlex%20and%20MAP%20Offline%20SDK%20Bundle_0.zip",
                      bundlezip))
     cd(parentdir) do
         run(`unzip $bundlezip`)
@@ -22,7 +22,7 @@ to_vec(x) = [x]
 
 m = matread(joinpath(testdir, "mexPlexData1.dat"))
 for plx in m["data"]["plxs"]
-    p = PLXFile(joinpath(testdir, plx["FileName"]), waveforms=true)
+    p = readplx(open(joinpath(testdir, plx["FileName"])))
     @test p.header.Version == plx["Version"]
     @test p.header.ADFrequency == plx["Freq"]
     @test p.header.Comment == plx["Comment"]
@@ -44,14 +44,14 @@ for plx in m["data"]["plxs"]
         myts = ts[iunit+2, ich+2]
         if myts == -1
             @test !haskey(p.spike_channels, ich) ||
-                  iunit > length(p.spike_channels[ich].units) ||
-                  isempty(p.spike_channels[ich].units[iunit].spike_times)
+                  sum(p.spike_channels[ich].unit_numbers .== iunit) .== 0
         else
             ch = p.spike_channels[ich]
-            unit = ch.units[iunit]
-            @test vec(myts) == unit.spike_times
-            @test wf[iunit+2, ich+2]' == unit.spike_waveforms
-            @test_approx_eq wf_v[iunit+2, ich+2]' unit.spike_waveforms/3276.8
+            inunit = find(ch.unit_numbers .== iunit)
+            @test vec(myts) == NeuroIO.times(ch)[inunit]
+            readwf = NeuroIO.data(ch)[:, inunit]
+            @test wf[iunit+2, ich+2]' == readwf
+            @test_approx_eq wf_v[iunit+2, ich+2]' readwf/3276.8
         end
     end
 
@@ -63,14 +63,15 @@ for plx in m["data"]["plxs"]
     for ich = -1:400
         myts = ts[ich+2]
         if myts == -1
-            @test !haskey(p.continuous_channels, ich) ||
-                  isempty(p.continuous_channels[ich].samples)
+            @test !haskey(p.continuous_channels, ich+1) ||
+                  isempty(NeuroIO.data(p.continuous_channels[ich+1]))
         else
-            ch = p.continuous_channels[ich]
-            @test to_vec(myts) == ch.times.timestamps[1:end-1]/ch.times.timestamp_frequency
-            @test frequency(ch.times) == freq[ich+2]
-            @test ch.samples == vec(val[ich+2])
-            @test ch.samples*ch.voltage_multiplier == vec(val_v[ich+2])
+            ch = p.continuous_channels[ich+1]
+            mydata = vec(val[ich+2])
+            @test first(myts) == first(ch.times)
+            @test samplerate(ch) == freq[ich+2]
+            @test NeuroIO.data(ch) == vec(val[ich+2])
+            @test NeuroIO.data(ch)*(ch.voltage_multiplier*1000) == vec(val_v[ich+2])
         end
     end
 
@@ -83,10 +84,10 @@ for plx in m["data"]["plxs"]
                   isempty(p.event_channels[ich].times)
         else
             ch = p.event_channels[ich]
-            @test_approx_eq ch.times to_vec(myts)
+            @test_approx_eq NeuroIO.times(ch) to_vec(myts)
             if ich == 257
                 v = to_vec(plx["strobed"]["v"])
-                @test v == ch.codes
+                @test v == NeuroIO.data(ch)
             end
         end
     end

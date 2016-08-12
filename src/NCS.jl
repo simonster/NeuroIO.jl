@@ -1,10 +1,13 @@
-module NeuralynxNCS
-using PiecewiseIncreasingRanges, Compat
+module NCS
+using ..Common, PiecewiseIncreasingRanges
+import Compat.String
+export readncs
 
-immutable NCSContinuousChannel
-    header::ByteString
-    samples::Vector{Int16}
+immutable NCSContinuousChannel <: ContinuousChannel
+    header::String
+    data::Vector{Int16}
     times::PiecewiseIncreasingRange{Float64,StepRange{Int64,Int64},Int64}
+    voltage_multiplier::Float64
 end
 
 immutable NCSRecordHeader
@@ -18,7 +21,7 @@ Base.read(io::IO, ::Type{NCSRecordHeader}) =
     NCSRecordHeader(read(io, UInt64), read(io, UInt32), read(io, UInt32), read(io, UInt32))
 
 function compute_times(rec::NCSRecordHeader, sample_multiplier::Int64, step::Int64)
-    @compat first_sample = Int64(rec.qwTimeStamp)*sample_multiplier
+    first_sample = Int64(rec.qwTimeStamp)*sample_multiplier
     first_sample:step:first_sample+step*(rec.dwNumValidSamples-1)
 end
 
@@ -37,6 +40,7 @@ function readncs(io::IO, sz::Union{Integer,Void}=nothing; skip_nonmonotonic::Boo
 
     nrecs::Int = isa(sz, Integer) ? div(sz-16384, 1044) : -1
     sample_buffer = Array(Int16, 512)
+    sample_buffer_reinterp = reinterpret(UInt8, sample_buffer)
     samples = Array(Int16, isa(sz, Integer) ? nrecs*512 : 512)
     nsamples = 0
     times = Array(StepRange{Int,Int}, isa(sz, Integer) ? nrecs : 1)
@@ -71,7 +75,7 @@ function readncs(io::IO, sz::Union{Integer,Void}=nothing; skip_nonmonotonic::Boo
         rec = read(io, NCSRecordHeader)
         rec.dwChannelNumber == rec1.dwChannelNumber || error("only one channel supported per file")
         rec.dwSampleFreq == rec1.dwSampleFreq || error("sample rate is non-constant")
-        read!(io, sample_buffer)
+        read!(io, sample_buffer_reinterp)
         rectimes = compute_times(rec, sample_multiplier, step)
         if first(rectimes) < last(times[nrecs])
             if skip_nonmonotonic
@@ -83,7 +87,7 @@ function readncs(io::IO, sz::Union{Integer,Void}=nothing; skip_nonmonotonic::Boo
                          Use readncs(..., skip_nonmotonoic=true) to skip nonmonotonic timestamps""")
             end
         end
-        isa(sz, Nothing) && resize!(samples, nsamples+rec.dwNumValidSamples)
+        isa(sz, Void) && resize!(samples, nsamples+rec.dwNumValidSamples)
         copy!(samples, nsamples+1, sample_buffer, 1, rec.dwNumValidSamples)
         nsamples += rec.dwNumValidSamples
         nrecs += 1
@@ -97,9 +101,14 @@ function readncs(io::IO, sz::Union{Integer,Void}=nothing; skip_nonmonotonic::Boo
     resize!(samples, nsamples)
     resize!(times, nrecs)
 
-    return NCSContinuousChannel(header, samples, PiecewiseIncreasingRange(times, divisor))
+    voltage_multiplier = NaN
+    m = match(r"\n\s*-ADBitVolts\s+([0-9.]+)", header)
+    if m !== nothing
+        voltage_multiplier = parse(Float64, m.captures[1])
+    end
+
+    return NCSContinuousChannel(header, samples, PiecewiseIncreasingRange(times, divisor), voltage_multiplier)
 end
 
-export readncs
 end
 

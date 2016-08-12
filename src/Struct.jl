@@ -1,9 +1,10 @@
 module Struct
 export @struct
+import Compat.String
 
-function struct_string(fn::Function, bytes::Vector{UInt8})
+function struct_string(bytes::Vector{UInt8})
     last_byte = findfirst(bytes, 0)
-    fn(last_byte == 0 ? bytes : bytes[1:last_byte-1])
+    String(last_byte == 0 ? bytes : bytes[1:last_byte-1])
 end
 
 macro struct(typename, contents)
@@ -22,7 +23,7 @@ macro struct(typename, contents)
         end
         fieldname = typedecl.args[1]
         fieldtype = typedecl.args[2]
-        field = :($(esc(:x)).$(fieldname))
+        field = :(x.$(fieldname))
         if isa(fieldtype, Expr) && fieldtype.head != :curly
             if fieldtype.head != :call
                 error("invalid struct declaration")
@@ -31,7 +32,7 @@ macro struct(typename, contents)
 
             if fieldtype.args[1] in (:ASCIIString, :UTF8String, :String)
                 typedecl.args[2] = fieldtype.args[1]
-                push!(read_blk.args, :(struct_string($(fieldtype.args[1] == :ASCIIString ? :ascii : :utf8), read(io, UInt8, ($(fieldtype.args[2:end]...))))))
+                push!(read_blk.args, :(struct_string(read(io, UInt8, ($(fieldtype.args[2:end]...))))))
                 push!(write_blk.args, quote
                     if sizeof($field) > $(fieldtype.args[2])
                         throw(ArgumentError($("size of $(fieldtype.args[1]) must be less than $(fieldtype.args[2])")))
@@ -45,8 +46,8 @@ macro struct(typename, contents)
                 typedecl.args[2] = :(Array{$(fieldtype.args[1]), $(length(fieldtype.args)-1)})
                 push!(read_blk.args, :(read(io, $(esc(fieldtype.args[1])), ($(fieldtype.args[2:end]...)))))
                 push!(write_blk.args, quote
-                    if size($field) != $((fieldtype.args[2:end]...,))
-                        throw(ArgumentError($("size of $(fieldtype.args[1]) must be $((fieldtype.args[2:end]...,))")))
+                    if size($field) != $(tuple(fieldtype.args[2:end]...))
+                        throw(ArgumentError($("size of $(fieldname) must be $((fieldtype.args[2:end]...,)), but was ")*string(size($field))))
                     end
                     write(io, $field)
                 end)
@@ -56,7 +57,6 @@ macro struct(typename, contents)
             push!(write_blk.args, :(write(io, $field)))
         end
     end
-    
     quote
         type $(esc(typename))
             $(esc(contents))
