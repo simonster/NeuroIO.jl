@@ -78,7 +78,7 @@ const CC = reinterpret(UInt16, "CC".data)[1]
 
 function readstring(io::IO, n)
     data = read(io, UInt8, n)
-    String(data[1:findfirst(data, '\0')-1])
+    String(data[1:findfirst(data, 0)-1])
 end
 
 """
@@ -229,70 +229,17 @@ end
     time_origin::UInt128
 end
 
-type NSXContinuousChannels{C} <: AbstractChannels{C}
+type NSXContinuousChannels{C,R} <: AbstractChannels{C}
     channels::Vector{C}
     number2idx::Vector{Int}
     idx2number::Vector{Int}
+    idx2segidx::R
     segment_data::Vector{Matrix{Int16}}
     segment_cumsum::Vector{Int}
     times::PiecewiseIncreasingRange{Float64,StepRange{Int64,Int64},Int64}
 
-    NSXContinuousChannels() = new(C[], Int[], Int[], Matrix{Int16}[], Int[],
+    NSXContinuousChannels(segmap) = new(C[], Int[], Int[], segmap, Matrix{Int16}[], Int[],
         PiecewiseIncreasingRange{Float64,StepRange{Int64,Int64},Int64}(StepRange{Int64,Int64}[],1))
-end
-
-Common.times(c::NSXContinuousChannels) = c.times
-
-function Common.data(c::NSXContinuousChannels)
-    if length(c.segment_data) == 1
-        return c.segment_data[1]
-    else
-        return hcat(c.segment_data...)
-    end
-end
-
-function Common.data(c::NSXContinuousChannels,
-                     channels::Union{Int,AbstractVector{Int}},
-                     samples::UnitRange{Int}=1:c.segment_cumsum[end])
-    first(samples) > 0 && last(samples) < c.segment_cumsum[end] ||
-        throw(ArgumentError("samples must be in range [1,$(length(c.chtimes))]"))
-    chidx = c.number2idx[channels]
-    for x in chidx
-        x == 0 && throw(ArgumentError("channel $x is not a valid channel"))
-    end
-
-    out = Array(Int16, length(chidx), length(samples))
-
-    # First segment
-    istartsegment = searchsortedfirst(c.segment_cumsum, first(samples))
-    segment = c.segment_data[istartsegment]
-
-    segmentoffset = istartsegment == 1 ? 0 : c.segment_cumsum[istartsegment]
-    startsample = first(samples) - segmentoffset
-    endsample = min(last(samples) - segmentoffset, size(segment, 2))
-    for j = 1:endsample-startsample+1, i = 1:length(chidx)
-        out[i, j] = segment[chidx[i], startsample+j-1]
-    end
-    outoffset = endsample-startsample+1
-
-    # Middle segments
-    istopsegment = searchsortedlast(c.segment_cumsum, last(samples))
-    for isegment = istartsegment+1:istopsegment-1
-        segment = c.segment_data[isegment]
-        for j = 1:size(segment, 2), i = 1:length(chidx)
-            out[i, outoffset+j] = segment[chidx[i], j]
-        end
-        outoffset += length(segment)
-    end
-
-    # Last segment
-    if istopsegment > istartsegment
-        segment = c.segment_data[istopsegment]
-        for j = 1:length(samples)-outoffset, i = 1:length(chidx)
-            out[i, outoffset+j] = segment[chidx[i], j]
-        end
-    end
-    out
 end
 
 type NSXContinuousChannel <: ContinuousChannel
@@ -319,7 +266,128 @@ type NSXContinuousChannel <: ContinuousChannel
     NSXContinuousChannel(cc, number) = new(cc, number)
 end
 
-NSXContinuousChannels() = NSXContinuousChannels{NSXContinuousChannel}()
+NSXContinuousChannels() = NSXContinuousChannels{NSXContinuousChannel,Void}(nothing)
+
+Common.times(c::NSXContinuousChannels) = c.times
+
+function Common.data(c::NSXContinuousChannels{NSXContinuousChannel,Void})
+    if length(c.segment_data) == 1
+        return c.segment_data[1]
+    else
+        return hcat(c.segment_data...)
+    end
+end
+
+function Common.data(c::NSXContinuousChannels)
+    if length(c.segment_data) == 1
+        return c.segment_data[1][c.idx2segidx, :]
+    else
+        return hcat([sub(seg, c.idx2segidx, :) for seg in c.segment_data]...)
+    end
+end
+
+function Common.data(c::NSXContinuousChannels,
+                     channels::Union{Int,AbstractVector{Int}},
+                     samples::UnitRange{Int}=1:c.segment_cumsum[end])
+    first(samples) > 0 && last(samples) < c.segment_cumsum[end] ||
+        throw(ArgumentError("samples must be in range [1,$(length(c.chtimes))]"))
+    chidx = c.number2idx[channels]
+    for x in chidx
+        x == 0 && throw(ArgumentError("channel $x is not a valid channel"))
+    end
+    if !isa(c.idx2segidx, Void)
+        chidx = c.idx2segidx[chidx]
+    end
+    @assert all(0 .< chidx .<= size(c.segment_data[1], 1))
+
+    out = Array(Int16, length(chidx), length(samples))
+
+    # First segment
+    istartsegment = searchsortedfirst(c.segment_cumsum, first(samples))
+    segment = c.segment_data[istartsegment]
+    segmentoffset = istartsegment == 1 ? 0 : c.segment_cumsum[istartsegment]
+    startsample = first(samples) - segmentoffset
+    endsample = min(last(samples) - segmentoffset, size(segment, 2))
+    @assert 0 < startsample <= size(segment, 2)
+    @assert 0 < endsample <= size(segment, 2)
+    for j = 1:endsample-startsample+1, i = 1:length(chidx)
+        @inbounds out[i, j] = segment[chidx[i], startsample+j-1]
+    end
+    outoffset = endsample-startsample+1
+
+    # Middle segments
+    istopsegment = searchsortedlast(c.segment_cumsum, last(samples))
+    for isegment = istartsegment+1:istopsegment-1
+        segment = c.segment_data[isegment]
+        @assert outoffset + size(segment, 2) <= length(samples)
+        for j = 1:size(segment, 2), i = 1:length(chidx)
+            @inbounds out[i, outoffset+j] = segment[chidx[i], j]
+        end
+        outoffset += size(segment, 2)
+    end
+
+    # Last segment
+    if istopsegment > istartsegment
+        segment = c.segment_data[istopsegment]
+        @assert length(samples)-outoffset <= size(segment, 2)
+        for j = 1:length(samples)-outoffset, i = 1:length(chidx)
+            @inbounds out[i, outoffset+j] = segment[chidx[i], j]
+        end
+    end
+    out
+end
+
+function Common.datavecs(c::NSXContinuousChannels,
+                         channels::Union{Int,AbstractVector{Int}}=validchannels(c))
+    chidx = c.number2idx[channels]
+    for x in chidx
+        x == 0 && throw(ArgumentError("channel $x is not a valid channel"))
+    end
+    if !isa(c.idx2segidx, Void)
+        chidx = c.idx2segidx[chidx]
+    end
+
+    datavecs = [Array(Int16, length(c.times)) for i = 1:length(channels)]
+    n = 0
+    for segment in c.segment_data
+        timeblock = div(8192, size(segment, 1))
+        for iblockstart = 1:timeblock:size(segment, 2)
+            timerg = iblockstart:min(iblockstart+timeblock-1, size(segment, 2))
+            for ich = 1:length(chidx)
+                datavec = datavecs[ich]
+                segch = chidx[ich]
+                for itp = timerg
+                    datavec[n+itp] = segment[segch, itp]
+                end
+            end
+        end
+        n += size(segment, 2)
+    end
+    @assert n == length(c.times)
+    datavecs
+end
+
+mapseg(::Void, y) = y
+mapseg(x, y) = x[y]
+function Base.getindex{C}(c::NSXContinuousChannels{C}, channels::AbstractVector)
+    chidx = c.number2idx[channels]
+    for x in chidx
+        x == 0 && throw(ArgumentError("channel $x is not a valid channel"))
+    end
+    segmap = mapseg(c.idx2segidx, chidx)
+    cc = NSXContinuousChannels{C,typeof(segmap)}(segmap)
+    cc.channels = c.channels[chidx]
+    cc.number2idx = zeros(Int, maximum(channels))
+    cc.idx2number = zeros(Int, maximum(channels))
+    cc.segment_data = c.segment_data
+    cc.segment_cumsum = c.segment_cumsum
+    cc.times = c.times
+    for i = 1:length(channels)
+        cc.number2idx[channels[i]] = i
+        cc.idx2number[i] = channels[i]
+    end
+    cc
+end
 
 Common.data(c::NSXContinuousChannel, samples::UnitRange{Int}=1:length(times(c))) =
     vec(data(c.cc, c.number, samples))
@@ -339,7 +407,7 @@ function readnsx_info(io::IO)
     read(io, UInt64) == NEURALCD || error("this does not appear to be an NSX file")
     header = read(io, NSXHeader)
     period::Int = header.period
-    channels = NSXContinuousChannels{NSXContinuousChannel}()
+    channels = NSXContinuousChannels()
 
     channel_count::Int = read(io, UInt32)
     for i = 1:channel_count
@@ -381,6 +449,7 @@ function readnsx(io::IOStream)
     nsx = readnsx_info(io)
     period::Int = nsx.header.period
     nch = length(nsx.continuous_channels)
+    tdiv = Int64(nsx.header.time_resolution_of_time_stamps)
     times = StepRange{Int64,Int64}[]
     data = Matrix{Int16}[]
     ichunk = 1
@@ -388,6 +457,13 @@ function readnsx(io::IOStream)
         byte = read(io, UInt8)
         byte == 0x01 || error("unexpected file contents")
         timestamp = read(io, UInt32)
+        while !isempty(times) && timestamp < last(last(times))
+            warn(@sprintf(
+                 "DISCARDING SEGMENT %d: segment ends at %.3f seconds, but next segment starts at %.3f seconds",
+                 ichunk-1, last(last(times))/tdiv, timestamp/tdiv))
+            pop!(times)
+            pop!(data)
+        end
         n_data_points = read(io, UInt32)
         corrupted = n_data_points == 0
         if corrupted
@@ -405,7 +481,7 @@ function readnsx(io::IOStream)
     end
     nsx.continuous_channels.segment_data = data
     nsx.continuous_channels.segment_cumsum = cumsum(Int[length(x) for x in data])
-    nsx.continuous_channels.times = PiecewiseIncreasingRange(times, Int64(nsx.header.time_resolution_of_time_stamps))
+    nsx.continuous_channels.times = PiecewiseIncreasingRange(times, tdiv)
     nsx
 end
 

@@ -253,6 +253,9 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
             timestamp_ranges[i] = Array(StepRange{Int64,Int64}, ntimestamps[i])
             channel.data = Array(Int16, nsamples[i])
         end
+    else
+        sample_dts = Array(Int64, 0)
+        timestamp_ranges = Array(Vector{StepRange{Int64,Int64}}, 0)
     end
 
     # Read through the file again
@@ -308,7 +311,6 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
                     sample_dt = sample_dts[ch+1]
                     timestamp_ranges[ch+1][t] = timestamp:sample_dt:timestamp+sample_dt*(block_samples-1)
 
-                    # Unrolling seems to help here
                     start_offset = cur_offset + 7
                     samples = channel.data
                     for i = 1:block_samples
@@ -426,6 +428,13 @@ function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
     end
 
     new_continuous_channels = Channels{PLXContinuousChannel}()
+    chs = Int[]
+    for (i, ch) in enumerate(continuous_channels)
+        hasdata(ch) && push!(chs, i)
+    end
+    dvecs = datavecs(continuous_channels, chs)
+
+    idatavec = 0
     for (i, ch) in enumerate(continuous_channels)
         if isa(ch, PLXContinuousChannel)
             new_continuous_channels[i] = ch
@@ -437,7 +446,7 @@ function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
         newch = new_continuous_channels[i] = PLXContinuousChannel(chheader, header)
         if hasdata(ch)
             newch.times = times(ch)
-            newch.data = data(ch)
+            newch.data = dvecs[idatavec += 1]
         end
     end
 

@@ -3,8 +3,8 @@ using Compat: String
 using PiecewiseIncreasingRanges
 
 export File, Channel, ContinuousChannel, SpikeChannel, EventChannel,
-       AbstractChannels, Channels, GenericSpikeChannel, validchannels, data, times,
-       hasdata, samplerate, bitspersample, voltagemultiplier, unitnumbers, label
+       AbstractChannels, Channels, GenericSpikeChannel, validchannels, data, datavecs,
+       times, hasdata, samplerate, bitspersample, voltagemultiplier, unitnumbers, label
 
 abstract File
 abstract NeuroChannel
@@ -137,8 +137,9 @@ is returned. If scaled is true, samples are returned in microvolts.
 data(c::NeuroChannel, samples::AbstractVector{Int}) = sub(data(c), samples)
 
 """
-    NeuroIO.data(c::AbstractChannels{C<:ContinuousChannel}, channels=nothing,
-           samples=1:length(chtimes(c)))
+    NeuroIO.data(c::AbstractChannels{C<:ContinuousChannel},
+                 channels=validchannels(c),
+                 samples=1:length(chtimes(c)))
 
 Get data from continuous channels recorded with a common time basis as an
 nchannels × nsamples matrix. `samples` specifies the sample indexes. `channels`
@@ -165,6 +166,16 @@ function data{C<:ContinuousChannel}(c::AbstractChannels{C},
     end
     data.'
 end
+
+"""
+    NeuroIO.datavecs(c::AbstractChannels, channels=nothing)
+
+Get data from multiple channels simultaneously and return a vector of vectors.
+This can be more efficient than calling NeuroIO.data on each channel,
+depending on the on-disk layout.
+"""
+datavecs(c::AbstractChannels, channels::AbstractVector{Int}=validchannels(c)) =
+    [data(c[x]) for x in channels]
 
 """
     NeuroIO.hasdata(c::NeuroChannel)
