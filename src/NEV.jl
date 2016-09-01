@@ -289,9 +289,9 @@ end
 function Common.data(c::NSXContinuousChannels,
                      channels::Union{Int,AbstractVector{Int}},
                      samples::UnitRange{Int}=1:c.segment_cumsum[end])
-    first(samples) > 0 && last(samples) < c.segment_cumsum[end] ||
-        throw(ArgumentError("samples must be in range [1,$(length(c.chtimes))]"))
-    chidx = c.number2idx[channels]
+    first(samples) > 0 && last(samples) <= c.segment_cumsum[end] ||
+        throw(ArgumentError("samples must be in range [1,$(c.segment_cumsum[end])]"))
+    chidx::Vector{Int} = c.number2idx[channels]
     for x in chidx
         x == 0 && throw(ArgumentError("channel $x is not a valid channel"))
     end
@@ -480,7 +480,7 @@ function readnsx(io::IOStream)
         ichunk += 1
     end
     nsx.continuous_channels.segment_data = data
-    nsx.continuous_channels.segment_cumsum = cumsum(Int[length(x) for x in data])
+    nsx.continuous_channels.segment_cumsum = cumsum(Int[size(x, 2) for x in data])
     nsx.continuous_channels.times = PiecewiseIncreasingRange(times, tdiv)
     nsx
 end
