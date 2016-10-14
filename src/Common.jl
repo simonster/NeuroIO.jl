@@ -147,7 +147,7 @@ specifies the specific channels to be returned. If set to `nothing`, all
 channels are returned.
 """
 function data{C<:ContinuousChannel}(c::AbstractChannels{C},
-                                    channels::AbstractVector{Int}=validchannels(c),
+                                    channels::Union{Int,AbstractVector{Int}}=validchannels(c),
                                     samples::Range{Int}=1:length(chtimes(c)))
     length(channels) == 0 && throw(ArgumentError("no channels specified"))
 

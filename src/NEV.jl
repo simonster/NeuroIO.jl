@@ -242,8 +242,8 @@ type NSXContinuousChannels{C,R} <: AbstractChannels{C}
         PiecewiseIncreasingRange{Float64,StepRange{Int64,Int64},Int64}(StepRange{Int64,Int64}[],1))
 end
 
-type NSXContinuousChannel <: ContinuousChannel
-    cc::NSXContinuousChannels
+type NSXContinuousChannel{T<:NSXContinuousChannels} <: ContinuousChannel
+    cc::T
     number::Int
 
     label::String
@@ -266,6 +266,7 @@ type NSXContinuousChannel <: ContinuousChannel
     NSXContinuousChannel(cc, number) = new(cc, number)
 end
 
+NSXContinuousChannel{T<:NSXContinuousChannels}(cc::T, number) = NSXContinuousChannel{T}(cc, number)
 NSXContinuousChannels() = NSXContinuousChannels{NSXContinuousChannel,Void}(nothing)
 
 Common.times(c::NSXContinuousChannels) = c.times
@@ -398,7 +399,7 @@ Common.times(c::NSXContinuousChannel) = c.cc.times
 
 type NSXFile
     header::NSXHeader
-    continuous_channels::NSXContinuousChannels{NSXContinuousChannel}
+    continuous_channels::NSXContinuousChannels{NSXContinuousChannel,Void}
 
     NSXFile(header, continuous_channels) = new(header, continuous_channels)
 end

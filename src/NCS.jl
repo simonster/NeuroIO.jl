@@ -35,7 +35,7 @@ function readncs(filename::AbstractString; kwargs...)
 end
 
 function readncs(io::IO, sz::Union{Integer,Void}=nothing; skip_nonmonotonic::Bool=false)
-    header = rstrip(bytestring(read(io, UInt8, 16384)), '\0')
+    header = rstrip(String(read(io, UInt8, 16384)), '\0')
     eof(io) && return NCSContinuousChannel(header, Int16[], PiecewiseIncreasingRange(StepRange{Int,Int}[], 1))
 
     nrecs::Int = isa(sz, Integer) ? div(sz-16384, 1044) : -1
