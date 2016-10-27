@@ -30,8 +30,8 @@ if !isfile(joinpath(testdir, "nev.mat"))
     """
 end
 
-nev = readnev(open("NSS Data/SampleNSSData.nev"))
-nev_mat = matread("NSS Data/nev.mat")["NEV"]
+nev = readnev(open(joinpath(testdir, "SampleNSSData.nev")))
+nev_mat = matread(joinpath(testdir, "nev.mat"))["NEV"]
 @test nev.header.bytes_in_headers == nev_mat["MetaTags"]["HeaderOffset"]
 @test nev.header.bytes_in_data_packets == nev_mat["MetaTags"]["PacketBytes"]
 @test nev.header.time_resolution_of_time_stamps == nev_mat["MetaTags"]["TimeRes"]
@@ -65,8 +65,8 @@ for i = 1:length(info["ElectrodeID"])
     @test NeuroIO.data(ch) == spikes["Waveform"][:, spike_index]
 end
 
-ns5 = readnsx(open("NSS Data/SampleNSSData.ns5"))
-ns5_mat = matread("NSS Data/ns5.mat")["NS5"]
+ns5 = readnsx(open(joinpath(testdir, "SampleNSSData.ns5")))
+ns5_mat = matread(joinpath(testdir, "ns5.mat"))["NS5"]
 @test ns5.header.label == rstrip(string(ns5_mat["MetaTags"]["SamplingLabel"]...), '\0')
 @test ns5.header.period == 30000/ns5_mat["MetaTags"]["SamplingFreq"]
 @test ns5.header.time_resolution_of_time_stamps == ns5_mat["MetaTags"]["TimeRes"]
