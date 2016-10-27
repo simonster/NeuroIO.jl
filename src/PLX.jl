@@ -183,11 +183,9 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
         x.event_channels[header.Channel] = PLXEventChannel(header)
     end
 
-    if lfps
-        for i=1:x.header.NumSlowChannels
-            header = read(ios, PL_SlowChannelHeader)
-            x.continuous_channels[header.Channel+1] = PLXContinuousChannel(header, fheader)
-        end
+    for i=1:x.header.NumSlowChannels
+        header = read(ios, PL_SlowChannelHeader)
+        lfps && (x.continuous_channels[header.Channel+1] = PLXContinuousChannel(header, fheader))
     end
 
     data_offset = position(ios)
@@ -200,7 +198,7 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
 
     nblocks = 0
     max_offset = div(filesize(ios)-data_offset, 2)
-    contents = Mmap.mmap(ios, Vector{Int16}, max_offset)
+    contents = Mmap.mmap(ios, Vector{Int16}, max_offset)::Vector{Int16}
     cur_offset = 1
     while cur_offset < max_offset
         block_type = contents[cur_offset]
@@ -216,7 +214,7 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
                 nsamples[ch+1] += contents[cur_offset+7]
             end
         else
-            error(strcat("Invalid data block type ", t))
+            error("invalid data block type ", block_type)
         end
 
         cur_offset += contents[cur_offset+7]+8
@@ -272,39 +270,41 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
         ch = convert(Int, contents[cur_offset+4])
 
         if block_type == 1          # spike
-            channel = x.spike_channels[ch]
-            num = (cur_spike[ch] += 1)
+            let channel = x.spike_channels[ch]
+                num = (cur_spike[ch] += 1)
 
-            channel.unit_numbers[num] = contents[cur_offset+5]
-            channel.times[num] = timestamp/x.header.ADFrequency
+                channel.unit_numbers[num] = contents[cur_offset+5]
+                channel.times[num] = timestamp/x.header.ADFrequency
 
-            block_samples = contents[cur_offset+6]*contents[cur_offset+7]
-            if waveforms
-                wf = channel.data
-                if block_samples == 0
-                    for i = 1:size(wf, 1)
-                        wf[i, num] = 0
-                    end
-                else
-                    for i = 1:block_samples
-                        wf[i, num] = contents[cur_offset+7+i]
+                block_samples = contents[cur_offset+6]*contents[cur_offset+7]
+                if waveforms
+                    wf = channel.data
+                    if block_samples == 0
+                        for i = 1:size(wf, 1)
+                            wf[i, num] = 0
+                        end
+                    else
+                        for i = 1:block_samples
+                            wf[i, num] = contents[cur_offset+7+i]
+                        end
                     end
                 end
+                cur_offset += block_samples
             end
-            cur_offset += block_samples
         elseif block_type == 4      # event
-            channel = x.event_channels[ch]
-            num = (cur_event[ch] += 1)
-            
-            channel.times[num] = timestamp/x.header.ADFrequency
-            if ch == 257
-                channel.data[num] = contents[cur_offset+5]
+            let channel = x.event_channels[ch]
+                num = (cur_event[ch] += 1)
+
+                channel.times[num] = timestamp/x.header.ADFrequency
+                if ch == 257
+                    channel.data[num] = contents[cur_offset+5]
+                end
             end
         elseif block_type == 5      # continuous
             block_samples = contents[cur_offset+7]
             if block_samples > 0
-                t = (cur_timestamp[ch+1] += 1)
                 if lfps
+                    t = (cur_timestamp[ch+1] += 1)
                     channel = x.continuous_channels[ch+1]
                     num = cur_sample[ch+1]
 
@@ -316,8 +316,8 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
                     for i = 1:block_samples
                         samples[num+i] = contents[start_offset+i]
                     end
+                    cur_sample[ch+1] += block_samples
                 end
-                cur_sample[ch+1] += block_samples
                 cur_offset += block_samples
             end
         end
