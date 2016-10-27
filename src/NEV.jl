@@ -287,18 +287,18 @@ function Common.data(c::NSXContinuousChannels)
     end
 end
 
+mapseg{T}(c::NSXContinuousChannels{T,Void}, chidx) = chidx
+mapseg(c::NSXContinuousChannels, chidx) = c.idx2segidx[chidx]
 function Common.data(c::NSXContinuousChannels,
                      channels::Union{Int,AbstractVector{Int}},
                      samples::UnitRange{Int}=1:c.segment_cumsum[end])
     first(samples) > 0 && last(samples) <= c.segment_cumsum[end] ||
         throw(ArgumentError("samples must be in range [1,$(c.segment_cumsum[end])]"))
-    chidx::Vector{Int} = c.number2idx[channels]
+    chidx = c.number2idx[channels]
     for x in chidx
         x == 0 && throw(ArgumentError("channel $x is not a valid channel"))
     end
-    if !isa(c.idx2segidx, Void)
-        chidx = c.idx2segidx[chidx]
-    end
+    chidx = mapseg(c, chidx)
     @assert all(0 .< chidx .<= size(c.segment_data[1], 1))
 
     out = Array(Int16, length(chidx), length(samples))
