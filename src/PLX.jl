@@ -103,7 +103,7 @@ type PLXSpikeChannel <: SpikeChannel
     function PLXSpikeChannel(header::PL_ChanHeader, fheader::PL_FileHeader)
         voltage_multiplier = 1e-3*(if fheader.Version >= 105
                 fheader.SpikeMaxMagnitudeMV/
-                    ((1 << (fheader.BitsPerSpikeSample-1))*header.Gain*fheader.SpikePreAmpGain*1000)
+                    ((1 << (fheader.BitsPerSpikeSample-1))*header.Gain*fheader.SpikePreAmpGain)
             elseif fheader.Version >= 103
                 fheader.SpikeMaxMagnitudeMV/
                     ((1 << (fheader.BitsPerSpikeSample-1))*header.Gain*1000)
@@ -340,7 +340,7 @@ function readplx(ios::IOStream; lfps::Bool=true, waveforms::Bool=true)
     return x
 end
 
-chmag(ch) = round(UInt16, 2^(bitspersample(ch)-1)*voltagemultiplier(ch)*1000)
+chmax(ch) = 2^(bitspersample(ch)-1)*voltagemultiplier(ch)*1e3
 
 function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
                   event_channels=Channels{PLXEventChannel}(),
@@ -350,8 +350,9 @@ function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
     LastTimestamp = 0.
     BitsPerSpikeSample = 16
     BitsPerSlowSample = 16
-    SpikeMaxMagnitudeMV::UInt16 = 0
-    SlowMaxMagnitudeMV::UInt16 = 0
+    SpikeMaxMagnitudeMV::UInt16 = 1
+    SlowMaxMagnitudeMV::UInt16 = 1
+    SpikePreAmpGain::UInt16 = 1000
     if !isempty(spike_channels)
         ADFrequency = round(Int32, samplerate(first(spike_channels)))
         for ch in spike_channels
@@ -360,33 +361,25 @@ function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
                 NumPointsWave = size(data(ch), 1)
             end
             LastTimestamp = max(LastTimestamp, last(times(ch)))
-            mag = chmag(ch)
-            if SpikeMaxMagnitudeMV == 0
-                SpikeMaxMagnitudeMV = mag
-            elseif SpikeMaxMagnitudeMV != mag
-                SpikeMaxMagnitudeMV = lcm(SpikeMaxMagnitudeMV, mag)
-            end
+            mag = round(UInt16, chmax(ch)*SpikePreAmpGain)
+            SpikeMaxMagnitudeMV = max(SpikeMaxMagnitudeMV, mag)
         end
     elseif !isempty(continuous_channels)
         ADFrequency = round(Int32, samplerate(first(continuous_channels)))
         for ch in continuous_channels
             ADFrequency = max(ADFrequency, samplerate(ch))
             LastTimestamp = max(LastTimestamp, last(times(ch)))
-            mag = chmag(ch)
-            if SlowMaxMagnitudeMV == 0
-                SlowMaxMagnitudeMV = mag
-            elseif SlowMaxMagnitudeMV != mag
-                SlowMaxMagnitudeMV = lcm(SlowMaxMagnitudeMV, mag)
-            end
+            mag = round(UInt16, chmax(ch))
+            SlowMaxMagnitudeMV = max(SlowMaxMagnitudeMV, mag)
         end
     end
     LastTimestamp *= ADFrequency
 
-    header = PL_FileHeader(MagicNumber, 103, "Created with NeuroIO.jl", ADFrequency,
+    header = PL_FileHeader(MagicNumber, 105, "Created with NeuroIO.jl", ADFrequency,
                            length(spike_channels), length(event_channels), length(continuous_channels),
                            NumPointsWave, div(NumPointsWave, 2), 0, 0, 0, 0, 0, 0, 0, ADFrequency,
                            LastTimestamp, 1, 1, BitsPerSpikeSample, BitsPerSlowSample,
-                           SpikeMaxMagnitudeMV, SlowMaxMagnitudeMV, 1, zeros(UInt8, 46),
+                           SpikeMaxMagnitudeMV, SlowMaxMagnitudeMV, SpikePreAmpGain, zeros(UInt8, 46),
                            zeros(Int32, 5, 130), zeros(Int32, 5, 130), zeros(Int32, 512))
 
     new_spike_channels = Channels{PLXSpikeChannel}()
@@ -395,7 +388,7 @@ function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
             new_spike_channels[i] = ch
             continue
         end
-        Gain = round(Int32, SpikeMaxMagnitudeMV/chmag(ch))
+        Gain = round(Int32, SpikeMaxMagnitudeMV/(SpikePreAmpGain*chmax(ch)))
         NUnits = maximum(unitnumbers(ch))
         chheader = PL_ChanHeader(label(ch), "", i, 10, i, 0, Gain, 0, 0, 2, NUnits, zeros(Int16, 64, 5),
                                  zeros(Int32, 5), NumPointsWave, zeros(Int16, 4, 2, 5), 0, "", zeros(Int32, 11))
@@ -441,7 +434,7 @@ function PLXFile(;spike_channels=Channels{PLXSpikeChannel}(),
             continue
         end
 
-        Gain = round(Int32, SlowMaxMagnitudeMV/chmag(ch))
+        Gain = round(Int32, SlowMaxMagnitudeMV/chmax(ch))
         chheader = PL_SlowChannelHeader(label(ch), i, samplerate(ch), Gain, hasdata(ch), 1, 0, "", zeros(Int32, 28))
         newch = new_continuous_channels[i] = PLXContinuousChannel(chheader, header)
         if hasdata(ch)
